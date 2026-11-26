@@ -90,41 +90,16 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Intentar activar GitHub Pages
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set +e
-          echo "Intentando activar Pages desde main (raíz)..."
-          gh api --method POST repos/${{ github.repository }}/pages \
-            -H "Accept: application/vnd.github+json" \
-            -f "source[branch]=main" -f "source[path]=/"
-          echo "POST classic exit=$?"
-          gh api --method PUT repos/${{ github.repository }}/pages \
-            -H "Accept: application/vnd.github+json" \
-            -f "source[branch]=main" -f "source[path]=/"
-          echo "PUT classic exit=$?"
-          gh api --method POST repos/${{ github.repository }}/pages \
-            -H "Accept: application/vnd.github+json" \
-            -f build_type=workflow
-          echo "POST workflow exit=$?"
-          gh api --method PUT repos/${{ github.repository }}/pages \
-            -H "Accept: application/vnd.github+json" \
-            -f build_type=workflow
-          echo "PUT workflow exit=$?"
-          echo "Estado actual:"
-          gh api repos/${{ github.repository }}/pages
-          true
-
       - name: Bajar artefacto del sitio
         uses: actions/download-artifact@v4
         with:
           name: site
           path: site
 
-      - name: Configurar Pages
+      - name: Configurar y activar Pages
         uses: actions/configure-pages@v5
+        with:
+          enablement: true
 
       - name: Subir artefacto de Pages
         uses: actions/upload-pages-artifact@v3
