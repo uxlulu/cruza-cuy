@@ -1,0 +1,136 @@
+name: Reconstruir y publicar Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  reconstruct:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Reconstruir binarios
+        run: |
+          set -euo pipefail
+          if [ ! -f index.pck ] || [ ! -f index.wasm ]; then
+            if [ ! -d assets_b64 ]; then
+              echo "Faltan binarios y no hay assets_b64/" >&2
+              exit 1
+            fi
+            cat assets_b64/part_*.txt | base64 -d | tar -xf -
+            if [ -f index.wasm.gz ] && [ ! -f index.wasm ]; then
+              gzip -dk index.wasm.gz
+            fi
+          fi
+          test -f index.pck
+          test -f index.wasm
+          test -f index.png
+          test -f index.icon.png
+          test -f index.apple-touch-icon.png
+          ls -lh index.pck index.wasm index.png index.icon.png index.apple-touch-icon.png
+          if [ -f SHA256SUMS ]; then
+            sha256sum -c SHA256SUMS
+          fi
+
+      - name: Guardar binarios en main y quitar trozos
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f index.pck index.wasm index.wasm.gz index.png index.icon.png index.apple-touch-icon.png
+          if [ -d assets_b64 ]; then
+            git rm -r assets_b64
+          fi
+          if git diff --cached --quiet; then
+            echo "Sin cambios de binarios"
+          else
+            git commit -m "Reconstruir binarios de ¡Cruza, Cuy! v0.4 en la raíz"
+            git push
+          fi
+
+      - name: Preparar carpeta del sitio
+        run: |
+          set -euo pipefail
+          mkdir -p site
+          cp -a index.html index.js index.audio.worklet.js \
+            index.pck index.wasm \
+            index.png index.icon.png index.apple-touch-icon.png \
+            .nojekyll BUILD.txt README.md site/
+          if [ -f index.wasm.gz ]; then cp -a index.wasm.gz site/; fi
+          if [ -f index.js.gz ]; then cp -a index.js.gz site/; fi
+          ls -lh site/
+
+      - name: Subir artefacto del sitio
+        uses: actions/upload-artifact@v4
+        with:
+          name: site
+          path: site
+          if-no-files-found: error
+
+  deploy:
+    needs: reconstruct
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+      contents: read
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Intentar activar GitHub Pages
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +e
+          echo "Intentando activar Pages desde main (raíz)..."
+          gh api --method POST repos/${{ github.repository }}/pages \
+            -H "Accept: application/vnd.github+json" \
+            -f "source[branch]=main" -f "source[path]=/"
+          echo "POST classic exit=$?"
+          gh api --method PUT repos/${{ github.repository }}/pages \
+            -H "Accept: application/vnd.github+json" \
+            -f "source[branch]=main" -f "source[path]=/"
+          echo "PUT classic exit=$?"
+          gh api --method POST repos/${{ github.repository }}/pages \
+            -H "Accept: application/vnd.github+json" \
+            -f build_type=workflow
+          echo "POST workflow exit=$?"
+          gh api --method PUT repos/${{ github.repository }}/pages \
+            -H "Accept: application/vnd.github+json" \
+            -f build_type=workflow
+          echo "PUT workflow exit=$?"
+          echo "Estado actual:"
+          gh api repos/${{ github.repository }}/pages
+          true
+
+      - name: Bajar artefacto del sitio
+        uses: actions/download-artifact@v4
+        with:
+          name: site
+          path: site
+
+      - name: Configurar Pages
+        uses: actions/configure-pages@v5
+
+      - name: Subir artefacto de Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Publicar
+        id: deployment
+        uses: actions/deploy-pages@v4
